@@ -61,4 +61,25 @@ describe("anchor-vault", () => {
 
     assert.equal(vaultState.vaultAmount.toNumber(), depositAmount.toNumber());
   });
+
+  it("Withdraws SOL from the vault", async () => {
+    const withdrawAmount = new anchor.BN(500_000_000); // 0.5 SOL
+
+    await program.methods
+      .withdraw(withdrawAmount)
+      .accounts({
+        user: user.publicKey,
+        vaultState: vaultStatePda,
+        vault: vaultPda,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+
+    const vaultState = await program.account.vaultState.fetch(vaultStatePda);
+
+    assert.equal(
+      vaultState.vaultAmount.toNumber(),
+      500_000_000 // 1 SOL - 0.5 SOL
+    );
+  });
 });

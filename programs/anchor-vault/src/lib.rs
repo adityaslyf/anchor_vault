@@ -20,6 +20,11 @@ pub mod anchor_vault { // This say everything inside here are buttons user can p
         Ok(())
     }
 
+    pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()>{
+        ctx.accounts.withdraw(amount)?;
+        Ok(())
+    }
+
 }
 
 // Things the user needs to provide to the button.
@@ -74,6 +79,28 @@ pub vault: SystemAccount<'info>,
 pub system_program: Program<'info, System>,
 }
 
+#[derive(Accounts)]
+pub struct Withdraw<'info>{
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"state", user.key().as_ref()],
+        bump = vault_state.state_bump
+    )]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        mut,
+        seeds = [b"vault", vault_state.key().as_ref()],
+        bump = vault_state.vault_bump
+    )]
+    pub vault: SystemAccount<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
 
 impl<'info> Initialize<'info> {
     pub fn initialize(&mut self, bumps: &InitializeBumps) -> Result<()> {
@@ -116,6 +143,53 @@ impl<'info> Deposit<'info> {
         }
 }
 
+
+impl<'info> Withdraw<'info> {
+    pub fn withdraw(&mut self, amount: u64) -> Result<()> {
+        //only owner can withdraw
+        require_keys_eq!(
+            self.vault_state.vault_owner,
+            self.user.key(),
+            VaultError::Unauthorized
+        );
+        
+        //can not withdraw more than is in the vault
+        require!(
+            self.vault_state.vault_amount >= amount,
+            VaultError::InsufficientFunds
+        );
+
+
+        let vault_state_key = self.vault_state.key();
+        //prepare signer seeds(this is why bumps exist)
+        let seeds = &[
+            b"vault",
+            vault_state_key.as_ref(),
+            &[self.vault_state.vault_bump]
+
+        ];
+
+        let signer = &[&seeds[..]];
+
+        //Transfer sol from vault to user
+
+        let cpi_ctx = CpiContext::new_with_signer(
+            self.system_program.to_account_info(),
+            Transfer {
+                from: self.vault.to_account_info(),
+                to: self.user.to_account_info(),
+            },
+            signer
+        );
+
+        transfer(cpi_ctx, amount)?;
+
+        //update vault state
+        self.vault_state.vault_amount -= amount;
+        Ok(())
+    }
+}
+
 // this is the state of the vault.
 #[derive(InitSpace)]
 #[account]
@@ -126,4 +200,13 @@ pub struct VaultState {
     pub vault_amount: u64,
     pub vault_bump: u8,
     pub state_bump: u8,
+}
+
+
+#[error_code]
+pub enum VaultError {
+    #[msg("You are not the owner of this vault")]
+    Unauthorized,
+    #[msg("You cannot withdraw more than is in the vault")]
+    InsufficientFunds,
 }
